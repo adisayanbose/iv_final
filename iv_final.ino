@@ -14,6 +14,13 @@ const int calculationInterval = 3000;  // Calculate flow rate every 6 seconds (6
 unsigned long lastCalculationTime = 0;
 float flowRate = 0.0;  // Flow rate in mL/hr
 int charge=98;
+const float R1 = 36500.0; // Resistor R1 in ohms
+const float R2 = 10000.0; // Resistor R2 in ohms
+const float Vref = 0.95;   // ESP32 reference voltage (3.3V)
+const float totalvotage = 3.3;
+// Use an appropriate analog pin for ESP32
+int chargePin = 34; // Example: GPIO34 for analog input
+
 
 U8G2_ST7567_ENH_DG128064_1_4W_SW_SPI u8g2(U8G2_R0, /* clock=*/ 18, /* data=*/ 23, /* cs=*/ 5, /* dc=*/ 4, /* reset=*/ 2); 
 
@@ -51,6 +58,7 @@ void setup(void) {
   Serial.begin(115200);  // Start Serial Monitor
   delay(1000);  // Allow time for Serial Monitor to initialize
   pinMode(sensorPin, INPUT);  // Set sensor pin as input
+  pinMode(chargePin, INPUT);
   attachInterrupt(sensorPin, onDrop, FALLING);  // Attach interrupt for ESP32
   Serial.println("IV Flow Rate Monitoring Initialized...");
   u8g2.begin();
@@ -58,6 +66,18 @@ void setup(void) {
 
 void loop(void) {
   unsigned long currentTime = millis();
+  int rawValue = readStableAnalog(); // Get stable ADC reading
+  float voltageOut = (rawValue * Vref) / 4095.0; // Calculate voltage at the analog pin (ESP32 ADC range is 0-4095)
+  float batteryVoltage =( voltageOut * ((R1 + R2) / R2)); // Calculate battery voltage
+  if(batteryVoltage<=4.2&&batteryVoltage>4.0){charge=100;}
+  else if(batteryVoltage<=4.0&&batteryVoltage>3.9){charge=75;}
+  else if(batteryVoltage<=3.8&&batteryVoltage>3.6){charge=50;}
+  else if(batteryVoltage<=3.6&&batteryVoltage>3.4){charge=25;}
+  else{charge=0;}
+  
+  Serial.print("Battery Voltage: ");
+  Serial.print(batteryVoltage);
+  Serial.println(" V");
 
   // Calculate flow rate every calculationInterval (6 seconds)
   if (currentTime - lastCalculationTime >= calculationInterval) {
@@ -91,7 +111,7 @@ void loop(void) {
      drawBluetoothSymbol(u8g2);
      drawWiFiSemiCircles(u8g2);
      drawDropIcon(u8g2);
-     drawText(flowRate,u8g2);
+     drawText(flowRate,charge,u8g2);
      drawNumberBox(0,23,u8g2);
      u8g2.drawXBMP(70, 3, 16, 15, BELL_BITMAP);
   } while (u8g2.nextPage());
@@ -180,7 +200,7 @@ void drawDropIcon(U8G2 &u8g2) {
     u8g2.drawDisc(centerX, centerY + height / 6, width / 2, U8G2_DRAW_ALL);
 }
 
-void drawText(int flowrate, U8G2 &u8g2) {
+void drawText(int flowrate,int charge, U8G2 &u8g2) {
     // Set font for flowrate
     u8g2.setFont(u8g2_font_ncenB14_tr);
     
@@ -204,6 +224,9 @@ void drawText(int flowrate, U8G2 &u8g2) {
     xPos = 98 - (textWidth / 2);
     u8g2.setCursor(xPos, 57);
     u8g2.print("ml/hr");
+
+    u8g2.setCursor(40,16);
+    u8g2.print(charge);
 }
 
 void drawNumberBox(int topLeftX,int topLeftY,U8G2 &u8g2) {
@@ -232,4 +255,14 @@ void drawNumberBox(int topLeftX,int topLeftY,U8G2 &u8g2) {
     if (dropFactor == 20.0) {
       u8g2.drawFrame(boxCenterX - (textWidth/2) - 2, (topLeftY + 34) - 9, textWidth + 4, 11);
     }
+}
+
+int readStableAnalog() {
+  const int numSamples = 20; // Number of samples for averaging
+  long total = 0;            // Accumulator for ADC values
+  for (int i = 0; i < numSamples; i++) {
+    total += analogRead(chargePin); // Read raw ADC value
+    delay(5);                     // Short delay between samples
+  }
+  return total / numSamples; // Return the average value
 }
